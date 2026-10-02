@@ -25,6 +25,19 @@ export const test = base.extend({
     const bookStorePage = new BookStorePage(page);
     await use(bookStorePage);
   },
+
+  credentials: async ({}, use) => {
+    const username = process.env.DEMOQA_USERNAME;
+    const password = process.env.DEMOQA_PASSWORD;
+
+    if (!username?.trim() || !password) {
+      throw new Error(
+        "Set DEMOQA_USERNAME and DEMOQA_PASSWORD in .env or the CI environment.",
+      );
+    }
+
+    await use({ username, password });
+  },
 });
 
 export { expect };
