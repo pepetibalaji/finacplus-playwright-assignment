@@ -33,7 +33,18 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   /* Reporter to use. See https://playwright.dev/docs/test-reporters */
 
-  reporter: [["list"], ["html", { open: "never" }]],
+  reporter: [
+    ["list"],
+    ["html", { open: "never" }],
+    [
+      "allure-playwright",
+      {
+        resultsDir: "allure-results",
+        detail: true,
+        suiteTitle: true,
+      },
+    ],
+  ],
 
   /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
   use: {
