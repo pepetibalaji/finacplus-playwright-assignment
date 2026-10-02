@@ -63,3 +63,81 @@ jobs:
           path: allure-results/
           retention-days: 30
           if-no-files-found: warn
+
+      - name: Prepare report website
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          mkdir -p report-site/allure report-site/playwright
+
+          cp -R allure-report/single-file/. report-site/allure/
+          cp -R playwright-report/. report-site/playwright/
+
+          cat > report-site/index.html <<'HTML'
+          <!doctype html>
+          <html lang="en">
+            <head>
+              <meta charset="utf-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1">
+              <title>FinacPlus Automation Reports</title>
+              <style>
+                body {
+                  font-family: system-ui, sans-serif;
+                  max-width: 760px;
+                  margin: 80px auto;
+                  padding: 0 24px;
+                  color: #172033;
+                  background: #f8fafc;
+                }
+                a {
+                  display: block;
+                  margin: 16px 0;
+                  padding: 20px;
+                  background: white;
+                  border: 1px solid #cbd5e1;
+                  border-radius: 10px;
+                  color: #1746a2;
+                  font-weight: 600;
+                }
+              </style>
+            </head>
+            <body>
+              <h1>FinacPlus Automation Reports</h1>
+              <p>UI and API results from the latest successful main-branch deployment.</p>
+              <nav aria-label="Test reports">
+                <a href="./allure/">Open Allure Report</a>
+                <a href="./playwright/">Open Playwright Report</a>
+              </nav>
+            </body>
+          </html>
+          HTML
+
+      - name: Package report website
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: report-site/
+
+  deploy:
+    name: Publish test reports
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+
+    concurrency:
+      group: github-pages
+      cancel-in-progress: false
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

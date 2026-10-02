@@ -5,6 +5,7 @@ blob-report/
 playwright/.auth/
 allure-results/
 allure-report/
+report-site/
 
 .env
 .env.*
