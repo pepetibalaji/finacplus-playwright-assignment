@@ -1,15 +1,37 @@
 name: Playwright Tests
 
+run-name: "Playwright | ${{ inputs.suite || 'all' }} | ${{ github.event_name }}"
+
 on:
   push:
     branches: [main, master]
+
   pull_request:
     branches: [main, master]
+
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: "Select the test suite"
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - ui
+          - api
+
+concurrency:
+  group: playwright-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   test:
     timeout-minutes: 60
     runs-on: ubuntu-latest
+
+    outputs:
+      pages_ready: ${{ steps.pages_package.outcome == 'success' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -17,25 +39,49 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
+          cache: npm
 
       - name: Install dependencies
         run: npm ci
 
       - name: Install Playwright Browsers
-        run: npx playwright install --with-deps
+        if: github.event_name != 'workflow_dispatch' || inputs.suite != 'api'
+        run: npx playwright install --with-deps chromium
 
       - name: Run Playwright tests
-        run: npx playwright test
+        id: tests
+        shell: bash
         env:
+          TEST_SUITE: ${{ inputs.suite || 'all' }}
           DEMOQA_USERNAME: ${{ secrets.DEMOQA_USERNAME }}
           DEMOQA_PASSWORD: ${{ secrets.DEMOQA_PASSWORD }}
           REQRES_API_KEY: ${{ secrets.REQRES_API_KEY }}
           REQRES_BASE_URL: "https://reqres.in"
           REQRES_COLLECTION: "users"
           REQRES_ENV: "prod"
+        run: |
+          case "$TEST_SUITE" in
+            all)
+              npx playwright test
+              ;;
+            ui)
+              npx playwright test --project=ui-chromium
+              ;;
+            api)
+              npx playwright test --project=api
+              ;;
+            *)
+              echo "Unsupported test suite"
+              exit 1
+              ;;
+          esac
 
       - name: Generate Allure report
-        if: ${{ !cancelled() }}
+        id: allure
+        if: >-
+          ${{ !cancelled() &&
+              (steps.tests.outcome == 'success' ||
+               steps.tests.outcome == 'failure') }}
         run: npx allure awesome allure-results --single-file --output allure-report/single-file
 
       - name: Upload Playwright report
@@ -45,6 +91,7 @@ jobs:
           name: playwright-report
           path: playwright-report/
           retention-days: 30
+          if-no-files-found: warn
 
       - name: Upload Allure report
         uses: actions/upload-artifact@v4
@@ -65,55 +112,88 @@ jobs:
           if-no-files-found: warn
 
       - name: Prepare report website
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: website
+        if: >-
+          ${{ !cancelled() &&
+              steps.allure.outcome == 'success' &&
+              github.ref == 'refs/heads/main' &&
+              (github.event_name == 'push' ||
+               github.event_name == 'workflow_dispatch') }}
         shell: bash
         run: |
+          test -f allure-report/single-file/index.html
+          test -f playwright-report/index.html
+
           mkdir -p report-site/allure report-site/playwright
 
           cp -R allure-report/single-file/. report-site/allure/
           cp -R playwright-report/. report-site/playwright/
 
-          cat > report-site/index.html <<'HTML'
+          cat > report-site/index.html <<HTML
           <!doctype html>
           <html lang="en">
             <head>
               <meta charset="utf-8">
               <meta name="viewport" content="width=device-width, initial-scale=1">
-              <title>FinacPlus Automation Reports</title>
+              <title>FinacPlus Test Reports</title>
               <style>
                 body {
                   font-family: system-ui, sans-serif;
-                  max-width: 760px;
-                  margin: 80px auto;
+                  max-width: 800px;
+                  margin: 70px auto;
                   padding: 0 24px;
-                  color: #172033;
-                  background: #f8fafc;
+                  color: #17243b;
+                  background: #f3f6fb;
                 }
+                main {
+                  padding: 32px;
+                  background: white;
+                  border-radius: 16px;
+                  border: 1px solid #dde5ef;
+                }
+                h1 { margin-top: 0; }
+                p { line-height: 1.6; }
                 a {
                   display: block;
-                  margin: 16px 0;
-                  padding: 20px;
-                  background: white;
-                  border: 1px solid #cbd5e1;
-                  border-radius: 10px;
-                  color: #1746a2;
+                  margin: 14px 0;
+                  padding: 16px;
+                  border-radius: 8px;
+                  background: #244dcc;
+                  color: white;
+                  text-decoration: none;
                   font-weight: 600;
+                }
+                a:hover { background: #183ba9; }
+                a:focus-visible {
+                  outline: 3px solid #f5b731;
+                  outline-offset: 3px;
                 }
               </style>
             </head>
             <body>
-              <h1>FinacPlus Automation Reports</h1>
-              <p>UI and API results from the latest successful main-branch deployment.</p>
-              <nav aria-label="Test reports">
-                <a href="./allure/">Open Allure Report</a>
-                <a href="./playwright/">Open Playwright Report</a>
-              </nav>
+              <main>
+                <h1>FinacPlus Test Reports</h1>
+                <p>Reports from the latest published execution.</p>
+                <a href="./allure/">Open Allure report</a>
+                <a href="./playwright/">Open Playwright report</a>
+                <a href="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}">
+                  View this workflow run
+                </a>
+                <a href="https://github.com/${GITHUB_REPOSITORY}/actions">
+                  Run tests in GitHub Actions
+                </a>
+                <p>
+                  To run tests, open Playwright Tests in GitHub Actions,
+                  select Run workflow, choose main, and select all, ui, or api.
+                </p>
+              </main>
             </body>
           </html>
           HTML
 
       - name: Package report website
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: pages_package
+        if: ${{ !cancelled() && steps.website.outcome == 'success' }}
         uses: actions/upload-pages-artifact@v4
         with:
           path: report-site/
@@ -121,17 +201,13 @@ jobs:
   deploy:
     name: Publish test reports
     needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: ${{ !cancelled() && needs.test.outputs.pages_ready == 'true' }}
     runs-on: ubuntu-latest
 
     permissions:
       contents: read
       pages: write
       id-token: write
-
-    concurrency:
-      group: github-pages
-      cancel-in-progress: false
 
     environment:
       name: github-pages
